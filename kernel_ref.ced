@@ -35,7 +35,7 @@ _APP:		equ	h8000
 _IOAREA16:	equ	hFF80
 _IOAREA08:	equ	hFFC0
 _VAR_INTERNAS:	equ	800
-_NUM_VAR:	equ 	6
+_NUM_VAR:	equ 	8
 
 
 ;
@@ -218,9 +218,35 @@ _getchar:
 ;------------------------------------------------------------------------------
 ;------------------------------------------------------------------------------
 _putchar:
+		cmp		r5, #h20
+		blt 		control_char
+		cmp		r5, #h7A
+		bgt		invalid_char
+		mov		posCursor,r4
+		mov		r5,VISOR(r4)
+		inc		posCursor
+		cmp		posCursor, #36
+		beq		visorCheio
+control_char:	cmp		r5, #h0D
+		beq		zeraCursor
+		cmp		r5,#h0A
+		beq		lineFeed
+		cmp		r5, #h08
+		beq		backSpace
 		rts		r7
 
+invalid_char:	mov		#-1, r0
+		rts		r7
 ;		
+visorCheio:	jsr		r7,limpavisor
+zeraCursor:	clr		posCursor
+		rts		r7
+lineFeed:	jsr		r7,limpavisor
+		rts		r7
+
+backSpace:	dec		posCursor
+		bmi		zeraCursor
+		rts		r7
 ;------------------------------------------------------------------------------
 ;------------------------------------------------------------------------------
 _putmsg:
@@ -292,9 +318,11 @@ limpavisor:
 
 org _APP
 	mov #80, VISOR
-	mov #2, r2
-	back: mov	segundos,r1
-	jmp	back
+back:	mov #2, r2
 	jsr r7,(_VETTAB(r2))
+	mov r0, r5
+	mov #4, r2
+	jsr r7,(_VETTAB(r2))
+	jmp	back
 	hlt
 
