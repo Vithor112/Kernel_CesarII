@@ -125,6 +125,7 @@ aux:		dw		0
 segundos:	dw		0
 milisegundos:	dw		0
 
+
 ;------------------------------------------------------------------------------
 ; INTERRUPÇAO INTERRUPCAO INTERRUPCAO INTERRUPCAO INTERRUPCAO INTERRUPCAO 
 ;------------------------------------------------------------------------------
@@ -178,7 +179,9 @@ cursorISRTIM:	tst		piscaCursor
 firstSwap:	mov		VISOR(r4), saveChar
 		mov 		#95,VISOR(r4)
 		jmp		end_ISRTIM
-negativaSave:	mov		#-1, saveChar
+negativaSave:	tst		saveChar
+		bne		end_ISRTIM
+		mov		#-1, saveChar
 end_ISRTIM:	and		#hFE, INTS
 		jmp		ISR3
 		
@@ -209,15 +212,23 @@ _getchar:
 		jsr		r7,_kbhit
 		tst 		r0	
 		beq		_getchar
+		clr		piscaCursor
+		cmp		saveChar, #95
+		beq 		pula_getchar
+		mov		posCursor, r0
+		mov		saveChar, VISOR(r0)
+pula_getchar:	clr		saveChar
 		mov 		bufferTecla, r0
 		clr		bufferTecla
-		clr		piscaCursor
+
 		rts		r7
 		
 ;		
 ;------------------------------------------------------------------------------
 ;------------------------------------------------------------------------------
 _putchar:
+		mov		r5, -(r6)
+		clr		r0
 		cmp		r5, #h20
 		blt 		control_char
 		cmp		r5, #h7A
@@ -233,23 +244,25 @@ control_char:	cmp		r5, #h0D
 		beq		lineFeed
 		cmp		r5, #h08
 		beq		backSpace
+end_putchar:	mov		(r6)+,r5
 		rts		r7
 
 invalid_char:	mov		#-1, r0
-		rts		r7
+		jmp		end_putchar
 ;		
 visorCheio:	jsr		r7,limpavisor
 zeraCursor:	clr		posCursor
-		rts		r7
+		jmp		end_putchar
 lineFeed:	jsr		r7,limpavisor
-		rts		r7
+		jmp		end_putchar
 
 backSpace:	dec		posCursor
 		bmi		zeraCursor
-		rts		r7
+		jmp		end_putchar
 ;------------------------------------------------------------------------------
 ;------------------------------------------------------------------------------
 _putmsg:
+		
 		rts		r7
 	
 ;		
@@ -314,7 +327,6 @@ limpavisor:
 	CLR 65534 
 	CLR 65535 
 	RTS R7
-
 
 org _APP
 	mov #80, VISOR
