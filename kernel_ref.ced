@@ -1,0 +1,300 @@
+;
+;
+;******************************************************************************
+;
+;	Arquivo de Referência para o desenvolvimento do kernel.
+;
+;	Versão: 2021.2
+;
+;	Áreas de memória
+;
+;	0000 - 7FFF		_KERNEL
+;					Área de Kernel para implementação dos alunos
+;
+;	0100 - 01FF		_VETTAB
+;					Tabela com os vetores das funções do kernel
+;					*** CUIDADO! Esse vetor está no meio da área de código ***
+;
+;	8000 - FF7F		_APP
+;					Área onde será colocado o programa de aplicação.
+;					Esse programa vai fazer o acesso aos periféricos e interrupções, através das funções do Kernel.
+;
+;	FF80 - FFBF 	_IOAREA16
+;					Area de perifericos, acessada na base 16 bits
+;
+;	FFC0 - FFFF		_IOAREA08
+;					Area de perifericos, acessada na base 8 bits
+;					
+;******************************************************************************
+
+
+_KERNEL:	equ	h0000
+_VETTAB:	equ	h0100
+_RESET:		equ	_VETTAB+H0100
+_APP:		equ	h8000
+_IOAREA16:	equ	hFF80
+_IOAREA08:	equ	hFFC0
+_VAR_INTERNAS:	equ	800
+_NUM_VAR:	equ 	6
+
+
+;
+;------------------------------------------------------------------------------
+;	Área reservada para os periféricos
+;------------------------------------------------------------------------------
+
+; Acesso em 16 bits
+		org		_IOAREA16
+		daw		[31]
+IVET:	dw		0			; Vetor de interrupção
+
+; Acesso em 8 bits
+		org		_IOAREA08
+		dab		[23]
+TIMDT:	db		0			; Registro de programação do timer
+INTS:	db		0			; INTERRUPT STATUS: IP x x x . x x IPStec IPStim
+INTE:	db		0			; INTERRUPT ENABLE: IE x x x . x x IEStec IEStim
+TECST:	db		0			; Status do teclado
+TECDT:	db		0			; Dado do teclado
+VISOR:	dab		[36]		; Portas de acesso ao visor
+
+;	
+;------------------------------------------------------------------------------
+;	Ponto de entrada do RESET do processador
+;------------------------------------------------------------------------------
+		org		_KERNEL
+		jmp		_RESET
+
+;
+;------------------------------------------------------------------------------
+;	Area do kernel com os vetores das funções do kernel
+;------------------------------------------------------------------------------
+		org		_VETTAB
+		dw		_kbhit
+		dw		_getchar
+		dw		_putchar
+		dw		_putmsg
+		dw		_getclock
+		dw		_setclock
+		dw		_setalarm
+		
+;	
+;------------------------------------------------------------------------------
+;	Código de RESET (BOOT) do processador/interrupção
+;------------------------------------------------------------------------------
+		org		_RESET
+; 1) Desabilitar o sistema de interrupções
+		clr 	INTE
+; 2) Inicializar o stack pointer (SP = R6)
+	 	mov 	#H7FFF, R6 
+; 3) Inicializar as variáveis internas usadas pelo sistema de interrupções e periféricos (IVET, INTE, etc.)
+		mov 	#ISR, IVET
+		clr 	INTS
+; 4) Inicializar as variáveis internas do kernel
+		mov	#_NUM_VAR, r0
+		clr	r1
+loop_reset:	clr	_VAR_INTERNAS(r1)
+		add 	#2, r1
+		dec	r0
+		BNE 	loop_reset
+		clr	r1
+		mov 	#-1, saveChar
+; 5) Inicializar o teclado zerando o byte de estado (TECST, endereço 65498)
+		clr	 TECST
+; 6) Inicializar o timer
+		mov 	#50, TIMDT
+; 7) Limpar o visor
+		jsr 	r7, limpavisor
+; 8) Habilitar interrupções
+		mov 	#h83, INTE
+; 9) Retornar para o programa de aplicação com um desvio para o endereço _APP da memória
+		jmp		_APP
+
+
+;------------------------------------------------------------------------------
+; VARIÁVEIS  VARIÁVEIS  VARIÁVEIS  VARIÁVEIS  VARIÁVEIS  VARIÁVEIS  VARIÁVEIS  
+;------------------------------------------------------------------------------
+	org _VAR_INTERNAS
+
+bufferTecla: 	dw 		0
+piscaCursor:	dw 		0
+tempoCursor:	dw		0
+saveChar:	dw 		0
+posCursor:	dw		0
+aux:		dw		0
+segundos:	dw		0
+milisegundos:	dw		0
+
+;------------------------------------------------------------------------------
+; INTERRUPÇAO INTERRUPCAO INTERRUPCAO INTERRUPCAO INTERRUPCAO INTERRUPCAO 
+;------------------------------------------------------------------------------
+
+org 900
+ISR:
+		clr		INTE		; Desliga interrupções
+		mov		r0,-(r6)	; Salva registradores
+		mov		r1,-(r6)
+		mov		r2,-(r6)
+		mov		r3,-(r6)
+		mov		r4,-(r6)
+		mov		r5,-(r6)
+		mov		INTS,r4		; Verifica se é INT do TECLADO
+		and		#2,r4
+		beq		ISR2
+		jmp		ISRtec		; Tratamento da INT do TECLADO
+ISR2:		mov		INTS,r4		; Verifica se é INT do TIMER
+		and		#1,r4
+		beq		ISR3
+		jmp		ISRtim		; Tratamento da INT do TIMER
+ISR3:		mov		(r6)+,r5	; Retorna os registradores da pilha
+		mov		(r6)+,r4
+		mov		(r6)+,r3
+		mov		(r6)+,r2
+		mov		(r6)+,r1
+		mov		(r6)+,r0
+		mov 		#h83, INTE	; Liga interrupções
+		rti				; Retorna da interrupção
+
+
+;; INTERRUPÇÃO TIMER
+ISRTIM: 	inc 		milisegundos
+		cmp		milisegundos,#20
+		bne		cursorISRTIM
+		clr		milisegundos
+		inc		segundos
+cursorISRTIM:	tst		piscaCursor
+		beq		negativaSave
+		inc		tempoCursor
+		cmp		#5,tempoCursor
+		bne		end_ISRTIM
+		clr		tempoCursor
+		mov 		posCursor, r4
+		tst		saveChar	
+		bmi		firstSwap
+		mov		VISOR(r4), aux
+		mov 		saveChar, VISOR(r4)
+		mov 		aux, saveChar
+		jmp		end_ISRTIM
+firstSwap:	mov		VISOR(r4), saveChar
+		mov 		#95,VISOR(r4)
+		jmp		end_ISRTIM
+negativaSave:	mov		#-1, saveChar
+end_ISRTIM:	and		#hFE, INTS
+		jmp		ISR3
+		
+		
+;; INTERRUPÇÃO TECLADO
+ISRTEC: 	tst 		TECST
+		beq		no_key
+		clr 		TECST
+		mov		TECDT,bufferTecla
+no_key:		and		#hFD, INTS
+		jmp 		ISR2
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_kbhit:
+		tst 		bufferTecla
+		beq		false_kbhit
+		mov		#1, r0
+		jmp 		exit_kbhit
+false_kbhit:	clr		r0
+exit_kbhit:	rts		r7
+		
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_getchar:
+		mov		#1,piscaCursor
+		jsr		r7,_kbhit
+		tst 		r0	
+		beq		_getchar
+		mov 		bufferTecla, r0
+		clr		bufferTecla
+		clr		piscaCursor
+		rts		r7
+		
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_putchar:
+		rts		r7
+
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_putmsg:
+		rts		r7
+	
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_getclock:
+		rts		r7
+		
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_setclock:
+		rts		r7
+		
+;		
+;------------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+_setalarm:
+		rts		r7
+
+
+
+;------------------------------------------------------------------------------
+; LIMPAVISOR LIMPAVISOR LIMPAVISOR LIMPAVISOR LIMPAVISOR LIMPAVISOR LIMPAVISOR 
+;------------------------------------------------------------------------------
+; Limpa o visor, forma mais eficiente de fazer isso segundo o livro Fundamentos de arquitetura de computadores  do professor Raul Weber
+limpavisor: 
+	CLR 65500
+	CLR 65501
+	CLR 65502 
+	CLR 65503 
+	CLR 65504 
+	CLR 65505 
+	CLR 65506 
+	CLR 65507 
+	CLR 65508 
+	CLR 65509 
+	CLR 65510 
+	CLR 65511 	
+	CLR 65512 
+	CLR 65513 
+	CLR 65514 
+	CLR 65515 
+	CLR 65516 
+	CLR 65517 
+	CLR 65518 
+	CLR 65519 
+	CLR 65520 
+	CLR 65521 
+	CLR 65522 
+	CLR 65523 
+	CLR 65524
+	CLR 65525 
+	   CLR 65526 
+	CLR 65527 
+	CLR 65528 
+	CLR 65529 
+	CLR 65530 
+	CLR 65531 
+	CLR 65532 
+	CLR 65533 
+	CLR 65534 
+	CLR 65535 
+	RTS R7
+
+
+org _APP
+	mov #80, VISOR
+	mov #2, r2
+	back: mov	segundos,r1
+	jmp	back
+	jsr r7,(_VETTAB(r2))
+	hlt
+
